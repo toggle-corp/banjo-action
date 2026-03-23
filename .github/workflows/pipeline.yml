@@ -1,0 +1,402 @@
+# NOTE: Shared workflow for other repo
+name: Build, Test & Release
+
+on:
+  workflow_call:
+    inputs:
+      # Job: Pre-commit
+      pre_commit__apt_packages:
+        type: string
+        description: "APT packages required for pre-commit checks"
+        required: false
+        default: ""
+      # Job: Docker
+      docker__push:
+        type: boolean
+        description: "Push docker image to ghcr registry"
+        default: false
+      docker__wait_cmd:
+        type: string
+        description: "Command used to wait to prep containers before starting checks/tests"
+        required: true
+      docker__migration_dummy_test:
+        type: string
+        description: "Test for running dummy test to run django migrations"
+        required: true
+      docker__run_graphql_check:
+        type: boolean
+        description: "Run GraphQL schema validation step"
+        default: false
+      docker__run_openapi_check:
+        type: boolean
+        description: "Run OpenAPI schema validation step"
+        default: false
+      docker__run_openapi_check_schema_filepath:
+        type: string
+        description: "Path to the tracked openAPI schema file"
+        default: ""
+      docker__compose_file:
+        type: string
+        description: "Docker Compose file to use for running containers"
+        default: "docker-compose.yml"
+      docker__compose_service_name:
+        type: string
+        description: "Docker Compose service name for the Django application"
+        default: "web"
+      docker__compose_test_cmd:
+        type: string
+        description: "Test command run inside the container"
+        required: true
+      docker__compose_ci_share_host_dir:
+        type: string
+        description: "Host directory used for ci-share in compose file"
+        default: "./ci-share"
+      # -- Extra steps
+      docker__post_test__extra_step_01:
+        type: string
+        description: "Extra test step - 01: Name"
+        default: "(Post test) Extra test step - 01"
+      docker__post_test__extra_step_01_command:
+        type: string
+        description: "(Post test) Extra test step - 01 - Command"
+        default: ""
+      # Job: Helm
+      helm__push:
+        type: boolean
+        description: "Push helm chart to ghcr registry"
+        default: false
+      helm__chart_directory:
+        type: string
+        description: "Path to the Helm chart directory"
+        required: true
+      # TODO: Job: Release
+    outputs:
+      # Docker
+      docker_image_name:
+        description: "Only docker image name"
+        value: ${{ jobs.docker_build.outputs.docker_image_name }}
+      docker_image_tag:
+        description: "Only docker image tag"
+        value: ${{ jobs.docker_build.outputs.docker_image_tag }}
+      docker_image:
+        description: "docker image with tag"
+        value: ${{ jobs.docker_build.outputs.docker_image }}
+      # Helm
+      helm_repo_url:
+        description: "Helm repo URL"
+        value: ${{ jobs.helm_publish.outputs.helm_repo_url }}
+      helm_chart:
+        description: "Helm Chart"
+        value: ${{ jobs.helm_publish.outputs.helm_chart }}
+      helm_target_revision:
+        description: "Helm target revision"
+        value: ${{ jobs.helm_publish.outputs.helm_target_revision }}
+
+env:
+  # NOTE: Remove this after all actions are upgraded to node24
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+  COMPOSE_CI_SHARE_DIR: ${{ inputs.docker__compose_ci_share_host_dir }}
+
+jobs:
+  pre_commit_checks:
+    name: Pre-Commit checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@main
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: '.python-version'
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05  # v1.6.0
+        if: ${{ inputs.pre_commit__apt_packages != '' }}
+        with:
+          packages: ${{ inputs.pre_commit__apt_packages }}
+
+      - name: Setup uv python environment
+        run: uv venv
+
+      - name: uv lock check
+        run: uv lock --locked --offline
+
+      - name: uv sync
+        run: uv sync --all-groups --all-extras
+
+      - uses: pre-commit/action@main
+
+  docker_build:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: pre_commit_checks
+    env:
+      COMPOSE_FILE: ${{ inputs.docker__compose_file }}
+      SERVICE_NAME: ${{ inputs.docker__compose_service_name }}
+
+    outputs:
+      docker_image_name: ${{ steps.prep.outputs.tagged_image_name }}
+      docker_image_tag: ${{ steps.prep.outputs.tag }}
+      docker_image: ${{ steps.prep.outputs.tagged_image }}
+
+    steps:
+      - uses: actions/checkout@main
+        with:
+          submodules: true
+
+      - name: Login to GitHub Container Registry
+        if: ${{ inputs.docker__push }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🐳 Prepare Docker
+        id: prep
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          BRANCH_NAME="${GITHUB_REF_NAME,,}"  # lowercase
+          BRANCH_NAME="${BRANCH_NAME:0:100}"  # truncate
+
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+
+          if [[ "$BRANCH_NAME" == *"/"* ]]; then
+              IMAGE_NAME="${IMAGE_NAME}-dev"
+              BRANCH_NAME="${BRANCH_NAME//\//-}"  # Replace / with _
+              TAG="${BRANCH_NAME//\//-}.c${SHORT_SHA}"
+          else
+              TAG="${BRANCH_NAME}.c${SHORT_SHA}"
+          fi
+
+          IMAGE_NAME="${IMAGE_NAME,,}"
+
+          {
+            echo "tagged_image_name=${IMAGE_NAME}"
+            echo "tag=${TAG}"
+            echo "tagged_image=${IMAGE_NAME}:${TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: 🐳 Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ steps.prep.outputs.tagged_image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Prep django containers
+        env:
+          DOCKER_IMAGE_BACKEND: ${{ steps.prep.outputs.tagged_image }}
+        run: |
+          touch .env
+          docker compose run --rm "$SERVICE_NAME" \
+            ${{ inputs.docker__wait_cmd }}
+
+      - name: 🕮  Validate django migrations
+        env:
+          DOCKER_IMAGE_BACKEND: ${{ steps.prep.outputs.tagged_image }}
+        run: |
+          docker compose run --rm "$SERVICE_NAME" \
+            bash -c './manage.py makemigrations --check --dry-run' || {
+              echo "There are some changes to be reflected in the migration. Make sure to run makemigrations";
+          }
+
+      - name: Run django migrations (Using dummy test)
+        env:
+          DOCKER_IMAGE_BACKEND: ${{ steps.prep.outputs.tagged_image }}
+          TMP_TEST_PATTERN: ${{ inputs.docker__migration_dummy_test }}
+        run: |
+          docker compose run --rm "$SERVICE_NAME" \
+              ./manage.py test --keepdb -v 2 "$TMP_TEST_PATTERN"
+
+      - name: 🕮  Validate latest graphql schema
+        if: ${{ inputs.docker__run_graphql_check }}
+        env:
+          DOCKER_IMAGE_BACKEND: ${{ steps.prep.outputs.tagged_image }}
+        run: |
+          docker compose run --rm "$SERVICE_NAME" \
+            ./manage.py graphql_schema --out /ci-share/schema-latest.graphql
+
+          # Compare with the committed schema
+          if ! cmp --silent schema.graphql ./ci-share/schema-latest.graphql; then
+            echo 'The schema.graphql is not up to date with the latest changes. Please update and push latest'
+            diff schema.graphql ./ci-share/schema-latest.graphql
+            exit 1
+          fi
+
+      # NOTE: Schema generation requires a valid database. Therefore, this step must run after "Run Django migrations."
+      - name: 🕮  Validate latest openapi schema
+        if: ${{ inputs.docker__run_openapi_check }}
+        env:
+          DOCKER_IMAGE_BACKEND: ${{ steps.prep.outputs.tagged_image }}
+          OPENAPI_FILEPATH: ${{ inputs.docker__run_openapi_check_schema_filepath }}
+        run: |
+          docker compose run --rm "$SERVICE_NAME" \
+            ./manage.py spectacular --file /ci-share/openapi-schema-latest.yaml
+
+          # Compare with the committed schema
+          if ! cmp --silent "$OPENAPI_FILEPATH" ./ci-share/openapi-schema-latest.yaml; then
+            echo "The '$OPENAPI_FILEPATH' is not up to date with the latest changes. Please update and push latest"
+            diff "$OPENAPI_FILEPATH" ./ci-share/openapi-schema-latest.yaml
+            exit 1
+          fi
+
+      - name: 🤞 Run tests
+        env:
+          DOCKER_IMAGE_BACKEND: ${{ steps.prep.outputs.tagged_image }}
+        run: |
+          docker compose run --rm "$SERVICE_NAME" \
+            ${{ inputs.docker__compose_test_cmd }}
+
+      - name: ${{ inputs.docker__post_test__extra_step_01 }}
+        if: ${{ inputs.docker__post_test__extra_step_01_command != '' }}
+        env:
+          DOCKER_IMAGE_BACKEND: ${{ steps.prep.outputs.tagged_image }}
+        run: ${{ inputs.docker__post_test__extra_step_01_command }}
+
+      - name: 🐳 Docker push
+        if: ${{ inputs.docker__push }}
+        run: docker push ${{ steps.prep.outputs.tagged_image }}
+
+  helm_validate:
+    name: Validate Helm
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.helm__chart_directory }}
+
+    steps:
+      - uses: actions/checkout@main
+        with:
+          submodules: true
+
+      - name: Install Helm
+        # TODO: Upgrade to v5
+        uses: azure/setup-helm@v4
+
+      - name: 🐳 Helm dependency
+        run: |
+          yq --indent 0 '.dependencies | map(select(.repository | test("^oci:") | not)) | map(["helm", "repo", "add", .name, .repository] | join(" ")) | .[]' Chart.lock | sh --
+          helm dependency build .
+
+      - name: Helm lint
+        run: helm lint .
+
+      - name: Helm template (snapshot)
+        run: ./update-snapshots.sh --check-diff-only
+
+  helm_publish:
+    name: Publish Helm
+    if: ${{ inputs.helm__push }}
+    needs:
+      - docker_build
+      - helm_validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.helm__chart_directory }}
+
+    outputs:
+      helm_repo_url: ${{ steps.push.outputs.helm_repo_url }}
+      helm_chart: ${{ steps.push.outputs.helm_chart }}
+      helm_target_revision: ${{ steps.push.outputs.helm_target_revision }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Helm
+        # TODO: Upgrade to v5
+        uses: azure/setup-helm@v4
+
+      - name: 🐳 Helm dependency
+        run: |
+          yq --indent 0 '.dependencies | map(select(.repository | test("^oci:") | not)) | map(["helm", "repo", "add", .name, .repository] | join(" ")) | .[]' Chart.lock | sh --
+          helm dependency build .
+
+      - name: Tag docker image in Helm Chart values.yaml
+        env:
+          IMAGE_NAME: ${{ needs.docker_build.outputs.docker_image_name }}
+          IMAGE_TAG: ${{ needs.docker_build.outputs.docker_image_tag }}
+        run: |
+          sed -i "s|SET-BY-CICD-IMAGE|$IMAGE_NAME|" values.yaml
+          sed -i "s/SET-BY-CICD-TAG/$IMAGE_TAG/" values.yaml
+
+      - name: Package Helm Chart
+        env:
+          IMAGE_TAG: ${{ needs.docker_build.outputs.docker_image_tag }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="-$(echo "$GITHUB_SHA" | head -c7)"
+            sed -i "s/-SET-BY-CICD/$TAG/g" Chart.yaml
+          else
+            if [[ "$GITHUB_REF_NAME" == *"/"* ]]; then
+              sed -i 's/^\(name:.*\)-helm$/\1-dev-helm/' Chart.yaml
+            fi
+            sed -i "s/SET-BY-CICD/$IMAGE_TAG/g" Chart.yaml
+          fi
+          mkdir -p .helm-charts
+          helm package . -d .helm-charts
+
+      - name: Push Helm Chart
+        id: push
+        env:
+          IMAGE: ${{ needs.docker_build.outputs.docker_image }}
+          OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}
+        run: |
+          # Ensure OCI_REPO is lowercase
+          OCI_REPO="${OCI_REPO,,}"
+
+          # Safely get the first .tgz file
+          PACKAGE_FILE=$(find .helm-charts -maxdepth 1 -name '*.tgz' | head -n 1)
+
+          HELM_CHART=$(helm show chart "$PACKAGE_FILE" | grep '^name:' | awk '{print $2}')
+          HELM_TARGET_REVISION=$(helm show chart "$PACKAGE_FILE" | grep '^version:' | awk '{print $2}')
+
+          {
+            echo "# Helm Chart"
+            echo ""
+            echo '```yaml'
+            helm push "$PACKAGE_FILE" "$OCI_REPO" 2>&1
+            echo '```'
+
+            echo "> [!IMPORTANT]"
+            echo "> Helm Repo URL: **$OCI_REPO**"
+            echo "> Helm Chart: **$HELM_CHART**"
+            echo "> Helm Target Revision: **$HELM_TARGET_REVISION**"
+            echo "> Docker image: **$IMAGE**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Annotations
+          echo "::notice::Helm Repo URL: $OCI_REPO"
+          echo "::notice::Helm Chart: $HELM_CHART"
+          echo "::notice::Helm Target Revision: $HELM_TARGET_REVISION"
+
+          {
+            echo "helm_repo_url=$OCI_REPO"
+            echo "helm_chart=$HELM_CHART"
+            echo "helm_target_revision=$HELM_TARGET_REVISION"
+          } >> "$GITHUB_OUTPUT"
