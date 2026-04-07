@@ -93,8 +93,6 @@ on:
         value: ${{ jobs.helm_publish.outputs.helm_target_revision }}
 
 env:
-  # NOTE: Remove this after all actions are upgraded to node24
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
   COMPOSE_CI_SHARE_DIR: ${{ inputs.docker__compose_ci_share_host_dir }}
 
 jobs:
@@ -285,8 +283,7 @@ jobs:
           submodules: true
 
       - name: Install Helm
-        # TODO: Upgrade to v5
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       - name: 🐳 Helm dependency
         run: |
@@ -317,7 +314,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@main
         with:
           submodules: true
 
@@ -329,8 +326,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Helm
-        # TODO: Upgrade to v5
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       - name: 🐳 Helm dependency
         run: |
