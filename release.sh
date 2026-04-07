@@ -17,4 +17,5 @@ export DEFAULT_BRANCH=main
 export GIT_CLIFF__REMOTE__GITHUB__OWNER=toggle-corp
 export GIT_CLIFF__REMOTE__GITHUB__REPO=toggle-django-action
 
-"$SCRIPT_DIR/fugit/scripts/release.sh"
+# Forward the argument - used for pre-fill version
+"$SCRIPT_DIR/fugit/scripts/release.sh" "${@:-}"
