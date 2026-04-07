@@ -139,7 +139,7 @@ jobs:
       - name: uv sync
         run: uv sync --all-groups --all-extras
 
-      - uses: pre-commit/action@main
+      - uses: toggle-corp/pre-commit-action@toggle
 
   docker_build:
     name: Test
