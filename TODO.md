@@ -13,3 +13,4 @@
         - used by graphql_schema
 - Check https://github.com/helm/chart-releaser-action
 - add example project here to test ./.github/workflows/pipeline.yml
+- setup renovatebot
