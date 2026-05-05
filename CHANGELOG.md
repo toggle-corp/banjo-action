@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.1.1](https://github.com/toggle-corp/toggle-django-action/compare/v0.1.0..v0.1.1) - 2026-05-05
+### Changes:
+
+#### 🐛 Bug Fixes
+
+- *(pre-commit)* Use python 3.13 + pre-commit v4 to fix ruff/pyproject error ([#4](https://github.com/toggle-corp/toggle-django-action/issues/4)) - ([d3ca682](https://github.com/toggle-corp/toggle-django-action/commit/d3ca68291a05e784c73bd46f5d821151bb5fe50c))
+- Release parsing issue - ([5d0d3ae](https://github.com/toggle-corp/toggle-django-action/commit/5d0d3ae9c0b59cd555849d75c64d6840c53ea1ba))
+
+### 🍻 Pull Requests (1)
+- (#4) [Fix(pre-commit): use Python 3.13 + pre-commit v4 to fix pre-commit error](https://github.com/toggle-corp/toggle-django-action/pull/4)
+
+
 ## [v0.1.0](https://github.com/toggle-corp/toggle-django-action/compare/v0.1.0-dev0..v0.1.0) - 2026-04-07
 ### Changes:
 
