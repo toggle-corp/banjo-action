@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.2.0](https://github.com/toggle-corp/toggle-django-action/compare/v0.1.1..v0.2.0) - 2026-07-08
+### Changes:
+
+#### 🚀  Features
+
+- *(helm)* Inject build/git provenance as ingress annotations - ([38b3d65](https://github.com/toggle-corp/toggle-django-action/commit/38b3d65e977d7dab8216b1411b586ae58fc099e1))
+
+#### 🐛 Bug Fixes
+
+- *(helm)* Make PR provenance lookup work and fail visibly - ([4768226](https://github.com/toggle-corp/toggle-django-action/commit/4768226468a8bdbf954e196dc2950d292d720ce7))
+
+
 ## [v0.1.1](https://github.com/toggle-corp/toggle-django-action/compare/v0.1.0..v0.1.1) - 2026-05-05
 ### Changes:
 
