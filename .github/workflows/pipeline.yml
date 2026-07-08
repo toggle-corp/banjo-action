@@ -330,6 +330,13 @@ jobs:
       - docker_build
       - helm_validate
     runs-on: ubuntu-latest
+    # NOTE: pull-requests:read is needed to resolve the PR from the commit for
+    # provenance annotations. A reusable workflow can only narrow the caller's
+    # token, so the CALLER must also grant `pull-requests: read`.
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
     defaults:
       run:
         working-directory: ${{ inputs.helm__chart_directory }}
@@ -418,17 +425,22 @@ jobs:
 
           # PR metadata: helm publishes on push/tag (no PR context), so resolve
           # the PR from the commit. Omit these keys when the commit has no PR.
-          PR_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0] // empty' 2>/dev/null || true)"
-          if [ -n "$PR_JSON" ]; then
-            export PR_NUMBER PR_AUTHOR PR_AUTHOR_IMAGE_URL
-            PR_NUMBER="$(echo "$PR_JSON" | jq -r '.number')"
-            PR_AUTHOR="$(echo "$PR_JSON" | jq -r '.user.login')"
-            PR_AUTHOR_IMAGE_URL="https://github.com/${PR_AUTHOR}.png"
-            EXPR="${EXPR} | ${P}.\"${A}/pr-number\" = strenv(PR_NUMBER)"
-            EXPR="${EXPR} | ${P}.\"${A}/pr-author\" = strenv(PR_AUTHOR)"
-            EXPR="${EXPR} | ${P}.\"${A}/pr-author-image-url\" = strenv(PR_AUTHOR_IMAGE_URL)"
+          # Requires `pull-requests: read`; a failed API call is surfaced (not
+          # silently treated as "no PR") so a missing scope is diagnosable.
+          if PR_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0] // empty' 2>/tmp/gh_pr_err)"; then
+            if [ -n "$PR_JSON" ]; then
+              export PR_NUMBER PR_AUTHOR PR_AUTHOR_IMAGE_URL
+              PR_NUMBER="$(echo "$PR_JSON" | jq -r '.number')"
+              PR_AUTHOR="$(echo "$PR_JSON" | jq -r '.user.login')"
+              PR_AUTHOR_IMAGE_URL="https://github.com/${PR_AUTHOR}.png"
+              EXPR="${EXPR} | ${P}.\"${A}/pr-number\" = strenv(PR_NUMBER)"
+              EXPR="${EXPR} | ${P}.\"${A}/pr-author\" = strenv(PR_AUTHOR)"
+              EXPR="${EXPR} | ${P}.\"${A}/pr-author-image-url\" = strenv(PR_AUTHOR_IMAGE_URL)"
+            else
+              echo "::notice::No PR associated with ${GITHUB_SHA}; skipping pr-* annotations."
+            fi
           else
-            echo "::notice::No PR associated with ${GITHUB_SHA}; skipping pr-* annotations."
+            echo "::warning::Could not query PRs for ${GITHUB_SHA} (does the token have 'pull-requests: read'?); skipping pr-* annotations. $(cat /tmp/gh_pr_err)"
           fi
 
           yq -i "$EXPR" values.yaml
