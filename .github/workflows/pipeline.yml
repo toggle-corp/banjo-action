@@ -69,6 +69,10 @@ on:
         type: string
         description: "Path to the Helm chart directory"
         required: true
+      helm__annotations_path:
+        type: string
+        description: "values.yaml path to write banjo.togglecorp.com/* provenance annotations (e.g. .app.api.ingress.annotations). Empty disables the feature. The parent node must already exist or the job fails."
+        default: ".app.api.ingress.annotations"
       # Job: Docker
       github_release__create:
         type: boolean
@@ -363,6 +367,74 @@ jobs:
         run: |
           sed -i "s|SET-BY-CICD-IMAGE|$IMAGE_NAME|" values.yaml
           sed -i "s/SET-BY-CICD-TAG/$IMAGE_TAG/" values.yaml
+
+      - name: Write provenance annotations to Helm Chart values.yaml
+        if: ${{ inputs.helm__annotations_path != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANNOTATIONS_PATH: ${{ inputs.helm__annotations_path }}
+          IMAGE_NAME: ${{ needs.docker_build.outputs.docker_image_name }}
+          IMAGE_TAG: ${{ needs.docker_build.outputs.docker_image_tag }}
+          IMAGE_REF: ${{ needs.docker_build.outputs.docker_image }}
+        run: |
+          set -euo pipefail
+
+          # Fail loudly if the chart does not follow the expected convention,
+          # rather than letting yq silently create a bogus nested tree.
+          PARENT="${ANNOTATIONS_PATH%.*}"
+          if ! yq -e "$PARENT" values.yaml >/dev/null 2>&1; then
+            echo "::error::helm__annotations_path parent '$PARENT' does not exist in values.yaml. Fix the chart or set helm__annotations_path to '' to disable."
+            exit 1
+          fi
+
+          # -- Provenance values (exported so yq strenv() can read them safely) --
+          export REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          export COMMIT="${GITHUB_SHA}"
+          export REF="${GITHUB_REF}"
+          export DATETIME COMMIT_MESSAGE
+          DATETIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          COMMIT_MESSAGE="$(git log -1 --pretty=%s)"
+          export API_DOCKER_IMAGE_LABEL="${IMAGE_REF}"
+          # Repo-scoped GHCR package page (package name = last segment of image name)
+          export API_DOCKER_IMAGE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pkgs/container/${IMAGE_NAME##*/}?tag=${IMAGE_TAG}"
+          export ACTOR="${GITHUB_ACTOR}"
+          export ACTOR_IMAGE_URL="https://github.com/${GITHUB_ACTOR}.png"
+          export CI_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          export REPO_OWNER_IMAGE_URL="https://github.com/${GITHUB_REPOSITORY_OWNER}.png"
+
+          P="$ANNOTATIONS_PATH"
+          A="banjo.togglecorp.com"
+          EXPR="${P}.\"${A}/repo-url\" = strenv(REPO_URL)"
+          EXPR="${EXPR} | ${P}.\"${A}/commit\" = strenv(COMMIT)"
+          EXPR="${EXPR} | ${P}.\"${A}/ref\" = strenv(REF)"
+          EXPR="${EXPR} | ${P}.\"${A}/datetime\" = strenv(DATETIME)"
+          EXPR="${EXPR} | ${P}.\"${A}/commit-message\" = strenv(COMMIT_MESSAGE)"
+          EXPR="${EXPR} | ${P}.\"${A}/api-docker-image-label\" = strenv(API_DOCKER_IMAGE_LABEL)"
+          EXPR="${EXPR} | ${P}.\"${A}/api-docker-image-url\" = strenv(API_DOCKER_IMAGE_URL)"
+          EXPR="${EXPR} | ${P}.\"${A}/actor\" = strenv(ACTOR)"
+          EXPR="${EXPR} | ${P}.\"${A}/actor-image-url\" = strenv(ACTOR_IMAGE_URL)"
+          EXPR="${EXPR} | ${P}.\"${A}/ci-run-url\" = strenv(CI_RUN_URL)"
+          EXPR="${EXPR} | ${P}.\"${A}/repo-owner-image-url\" = strenv(REPO_OWNER_IMAGE_URL)"
+
+          # PR metadata: helm publishes on push/tag (no PR context), so resolve
+          # the PR from the commit. Omit these keys when the commit has no PR.
+          PR_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0] // empty' 2>/dev/null || true)"
+          if [ -n "$PR_JSON" ]; then
+            export PR_NUMBER PR_AUTHOR PR_AUTHOR_IMAGE_URL
+            PR_NUMBER="$(echo "$PR_JSON" | jq -r '.number')"
+            PR_AUTHOR="$(echo "$PR_JSON" | jq -r '.user.login')"
+            PR_AUTHOR_IMAGE_URL="https://github.com/${PR_AUTHOR}.png"
+            EXPR="${EXPR} | ${P}.\"${A}/pr-number\" = strenv(PR_NUMBER)"
+            EXPR="${EXPR} | ${P}.\"${A}/pr-author\" = strenv(PR_AUTHOR)"
+            EXPR="${EXPR} | ${P}.\"${A}/pr-author-image-url\" = strenv(PR_AUTHOR_IMAGE_URL)"
+          else
+            echo "::notice::No PR associated with ${GITHUB_SHA}; skipping pr-* annotations."
+          fi
+
+          yq -i "$EXPR" values.yaml
+
+          echo "Wrote provenance annotations under ${P}:"
+          yq "${P}" values.yaml
 
       - name: Package Helm Chart
         env:
