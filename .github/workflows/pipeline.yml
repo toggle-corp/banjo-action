@@ -51,6 +51,10 @@ on:
         type: string
         description: "Host directory used for ci-share in compose file"
         default: "./ci-share"
+      docker__codecov_upload:
+        type: boolean
+        description: "Upload coverage to Codecov after tests (requires CODECOV_TOKEN secret)"
+        default: false
       # -- Extra steps
       docker__post_test__extra_step_01:
         type: string
@@ -78,6 +82,10 @@ on:
         type: boolean
         description: "Create github release (use this with tags)"
         default: false
+    secrets:
+      CODECOV_TOKEN:
+        description: "Codecov upload token (used when docker__codecov_upload is enabled)"
+        required: false
     outputs:
       # Docker
       docker_image_name:
@@ -285,6 +293,13 @@ jobs:
         run: |
           docker compose run --rm "$SERVICE_NAME" \
             ${{ inputs.docker__compose_test_cmd }}
+
+      - name: ☂️ Upload coverage to Codecov
+        if: ${{ inputs.docker__codecov_upload }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
       - name: ${{ inputs.docker__post_test__extra_step_01 }}
         if: ${{ inputs.docker__post_test__extra_step_01_command != '' }}
