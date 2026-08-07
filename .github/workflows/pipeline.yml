@@ -237,6 +237,7 @@ jobs:
           docker compose run --rm "$SERVICE_NAME" \
             bash -c './manage.py makemigrations --check --dry-run' || {
               echo "There are some changes to be reflected in the migration. Make sure to run makemigrations";
+              exit 1;
           }
 
       - name: Run django migrations (Using dummy test)
