@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.3.0](https://github.com/toggle-corp/toggle-django-action/compare/v0.2.0..v0.3.0) - 2026-08-07
+### Changes:
+
+#### 🚀  Features
+
+- *(docker)* Optional Codecov coverage upload - ([170ef51](https://github.com/toggle-corp/toggle-django-action/commit/170ef51dfd7dab6edfb4ead6ffa0f97fdfa23718))
+
+#### 🐛 Bug Fixes
+
+- Throw error on makemigrations issue - ([f6e9d43](https://github.com/toggle-corp/toggle-django-action/commit/f6e9d433e2126634ce8c469c85e157648b035ee9))
+
+
 ## [v0.2.0](https://github.com/toggle-corp/toggle-django-action/compare/v0.1.1..v0.2.0) - 2026-07-08
 ### Changes:
 
