@@ -77,6 +77,10 @@ on:
         type: string
         description: "values.yaml path to write banjo.togglecorp.com/* provenance annotations (e.g. .app.api.ingress.annotations). Empty disables the feature. The parent node must already exist or the job fails."
         default: ".app.api.ingress.annotations"
+      helm__version:
+        type: string
+        description: "Helm version to use"
+        default: "latest"
       # Job: Docker
       github_release__create:
         type: boolean
@@ -327,6 +331,8 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v5
+        with:
+          version: ${{ inputs.helm__version }}
 
       - name: 🐳 Helm dependency
         run: |
@@ -377,6 +383,8 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v5
+        with:
+          version: ${{ inputs.helm__version }}
 
       - name: 🐳 Helm dependency
         run: |
