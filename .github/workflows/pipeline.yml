@@ -138,10 +138,6 @@ jobs:
         with:
           submodules: ${{ inputs.checkout__submodules }}
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version-file: '.python-version'
-
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
